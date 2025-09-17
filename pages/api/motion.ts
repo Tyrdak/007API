@@ -1,14 +1,10 @@
 import type { NextApiRequest, NextApiResponse } from "next";
 import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL = process.env.SUPABASE_URL!;
-const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE!;
-const INGEST_SECRET = process.env.INGEST_SECRET || "feur";
+const SUPABASE_URL = process.env.SUPABASE_URL;
+const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const INGEST_SECRET = process.env.INGEST_SECRET;
 const TABLE_NAME = process.env.MOTIONS_TABLE || "motions";
-
-const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE, {
-  auth: { persistSession: false },
-});
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") {
@@ -19,16 +15,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   try {
     const body = req.body || {};
 
-    // Vérification de la clé
     const providedKey = body.Key || body.key || "";
-    if (!providedKey || providedKey !== INGEST_SECRET) {
-      return res.status(403).json({ ok: false, error: "ACCESS DENIED" });
+    if (process.env.NODE_ENV === "production") {
+      if (!INGEST_SECRET) {
+        return res.status(500).json({ ok: false, error: "INGEST_SECRET is not configured" });
+      }
+      if (providedKey !== INGEST_SECRET) {
+        return res.status(403).json({ ok: false, error: "ACCESS DENIED" });
+      }
+    } else {
+      if (INGEST_SECRET && providedKey !== INGEST_SECRET) {
+        return res.status(403).json({ ok: false, error: "ACCESS DENIED" });
+      }
+      // In development without an ingest secret, accept all requests.
     }
 
     const message = body.Msg || "Vodka-Martini";
     const host = body.Host || "unknown";
 
-    // GPS
     let latitude = parseFloat(body.lat || body.latitude);
     let longitude = parseFloat(body.lon || body.longitude);
     if ((isNaN(latitude) || isNaN(longitude)) && typeof body.loc === "string") {
@@ -39,7 +43,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       }
     }
 
-    // Date serveur
     const nowIso = new Date().toISOString();
 
     const ip =
@@ -59,6 +62,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       message_date: nowIso,
       timestamp: nowIso,
     };
+
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE) {
+      return res.status(500).json({ ok: false, error: "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE" });
+    }
+
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE, {
+      auth: { persistSession: false },
+    });
 
     const { error } = await supabase.from(TABLE_NAME).insert([payload]);
     if (error) return res.status(500).json({ ok: false, error: error.message });
