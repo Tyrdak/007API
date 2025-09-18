@@ -4,7 +4,12 @@ import { createClient } from "@supabase/supabase-js";
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const INGEST_SECRET = process.env.INGEST_SECRET;
-const TABLE_NAME = process.env.MOTIONS_TABLE || "motions";
+// Normalize table name to avoid cases like "public.public.motions"
+const RAW_TABLE_NAME = process.env.MOTIONS_TABLE || "motions";
+const TABLE_NAME = (() => {
+  const parts = RAW_TABLE_NAME.split(/[.:]/).filter(Boolean);
+  return parts.length > 1 ? parts[parts.length - 1] : RAW_TABLE_NAME;
+})();
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   if (req.method !== "POST") {
