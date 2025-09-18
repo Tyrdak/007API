@@ -13,8 +13,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const body = req.body || {};
+    // 🔥 Parsing robuste du body
+    let body: any = req.body;
+    if (typeof body === "string") {
+      try {
+        // Essaye JSON.parse normal
+        body = JSON.parse(body);
+      } catch {
+        try {
+          // Si c'est du pseudo-JSON avec des quotes simples → on corrige
+          const fixed = body.replace(/'/g, '"');
+          body = JSON.parse(fixed);
+        } catch (err) {
+          return res.status(400).json({ ok: false, error: "Invalid JSON body" });
+        }
+      }
+    }
 
+    // ------------------- Auth -------------------
     const providedKey = body.Key || body.key || "";
     if (process.env.NODE_ENV === "production") {
       if (!INGEST_SECRET) {
@@ -27,11 +43,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       if (INGEST_SECRET && providedKey !== INGEST_SECRET) {
         return res.status(403).json({ ok: false, error: "ACCESS DENIED" });
       }
-      // In development without an ingest secret, accept all requests.
     }
 
+    // ------------------- Données -------------------
     const message = body.Msg || "Vodka-Martini";
     const host = body.Host || "unknown";
+    const urlFromBody = (() => {
+      if (!body || typeof body !== "object") return null;
+      if (typeof body.Url === "string") return body.Url;
+      if (typeof body.url === "string") return body.url;
+      if (typeof (body as any).URL === "string") return (body as any).URL;
+      // Recherche clé insensible à la casse/espaces (ex: "Url ", "URL", " url")
+      const foundKey = Object.keys(body).find(k => k.trim().toLowerCase() === "url");
+      return foundKey ? body[foundKey] : null;
+    })();
 
     let latitude = parseFloat(body.lat || body.latitude);
     let longitude = parseFloat(body.lon || body.longitude);
@@ -58,11 +83,13 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       latitude: isNaN(latitude) ? null : latitude,
       longitude: isNaN(longitude) ? null : longitude,
       host,
+      url: typeof urlFromBody === "string" ? urlFromBody.trim() : null,
       ip_address: ip,
       message_date: nowIso,
       timestamp: nowIso,
     };
 
+    // ------------------- Supabase -------------------
     if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE) {
       return res.status(500).json({ ok: false, error: "Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE" });
     }
