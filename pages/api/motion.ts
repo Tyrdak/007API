@@ -14,24 +14,26 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
   try {
     // 🔥 Parsing robuste du body
-    let body: any = req.body;
-    if (typeof body === "string") {
+    type BodyObject = Record<string, unknown>;
+    let parsedBody: unknown = req.body;
+    if (typeof parsedBody === "string") {
       try {
-        // Essaye JSON.parse normal
-        body = JSON.parse(body);
+        parsedBody = JSON.parse(parsedBody);
       } catch {
         try {
-          // Si c'est du pseudo-JSON avec des quotes simples → on corrige
-          const fixed = body.replace(/'/g, '"');
-          body = JSON.parse(fixed);
-        } catch (err) {
+          const fixed = (parsedBody as string).replace(/'/g, '"');
+          parsedBody = JSON.parse(fixed);
+        } catch {
           return res.status(400).json({ ok: false, error: "Invalid JSON body" });
         }
       }
     }
+    const body: BodyObject = (parsedBody && typeof parsedBody === "object") ? (parsedBody as BodyObject) : {};
 
     // ------------------- Auth -------------------
-    const providedKey = body.Key || body.key || "";
+    const providedKey =
+      (typeof body["Key"] === "string" ? (body["Key"] as string) :
+      typeof body["key"] === "string" ? (body["key"] as string) : "");
     if (process.env.NODE_ENV === "production") {
       if (!INGEST_SECRET) {
         return res.status(500).json({ ok: false, error: "INGEST_SECRET is not configured" });
@@ -46,22 +48,28 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     }
 
     // ------------------- Données -------------------
-    const message = body.Msg || "Vodka-Martini";
-    const host = body.Host || "unknown";
+    const message = typeof body["Msg"] === "string" ? (body["Msg"] as string) : "Vodka-Martini";
+    const host = typeof body["Host"] === "string" ? (body["Host"] as string) : "unknown";
     const urlFromBody = (() => {
-      if (!body || typeof body !== "object") return null;
-      if (typeof body.Url === "string") return body.Url;
-      if (typeof body.url === "string") return body.url;
-      if (typeof (body as any).URL === "string") return (body as any).URL;
-      // Recherche clé insensible à la casse/espaces (ex: "Url ", "URL", " url")
-      const foundKey = Object.keys(body).find(k => k.trim().toLowerCase() === "url");
-      return foundKey ? body[foundKey] : null;
+      if (!body) return null;
+      if (typeof body["Url"] === "string") return body["Url"] as string;
+      if (typeof body["url"] === "string") return body["url"] as string;
+      if (typeof body["URL"] === "string") return body["URL"] as string;
+      const foundKey = Object.keys(body).find((k) => k.trim().toLowerCase() === "url");
+      if (!foundKey) return null;
+      const value = body[foundKey];
+      return typeof value === "string" ? value : null;
     })();
 
-    let latitude = parseFloat(body.lat || body.latitude);
-    let longitude = parseFloat(body.lon || body.longitude);
-    if ((isNaN(latitude) || isNaN(longitude)) && typeof body.loc === "string") {
-      const m = body.loc.trim().match(/(-?\d+(?:\.\d+)?)[,\s]+(-?\d+(?:\.\d+)?)/);
+    const parseNum = (v: unknown): number => {
+      if (typeof v === "number") return v;
+      if (typeof v === "string") return parseFloat(v);
+      return NaN;
+    };
+    let latitude = parseNum(body["lat"] ?? body["latitude"]);
+    let longitude = parseNum(body["lon"] ?? body["longitude"]);
+    if ((isNaN(latitude) || isNaN(longitude)) && typeof body["loc"] === "string") {
+      const m = (body["loc"] as string).trim().match(/(-?\d+(?:\.\d+)?)[,\s]+(-?\d+(?:\.\d+)?)/);
       if (m) {
         latitude = parseFloat(m[1]);
         longitude = parseFloat(m[2]);
